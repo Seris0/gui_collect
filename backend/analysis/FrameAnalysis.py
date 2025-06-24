@@ -196,6 +196,10 @@ class FrameAnalysis():
         if self.cfg.game[game].game_options.delete_frame_analysis:
             shutil.rmtree(self.path)
             self.terminal.print('Deleted frame analysis <PATH>{}</PATH>'.format(str(self.path.absolute())))
+            deduped_path = self.path.parent / "FrameAnalysisDeduped"
+            if deduped_path.exists() and deduped_path.is_dir():
+                shutil.rmtree(deduped_path)
+                self.terminal.print('Deleted deduped frame analysis <PATH>{}</PATH>'.format(str(deduped_path.absolute())))
 
         if self.cfg.game[game].game_options.open_extract_folder:
             subprocess.run([FILEBROWSER_PATH, extract_path])
