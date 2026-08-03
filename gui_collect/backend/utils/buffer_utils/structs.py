@@ -62,6 +62,23 @@ POSITION_FMT = [
     }),
 ]
 
+POSITION_NORMAL_FMT = [
+    BufferElement({
+        "Name": "POSITION",
+        "SemanticName": "POSITION",
+        "SemanticIndex": "0",
+        "Format": "R32G32B32_FLOAT",
+        "ByteWidth": 12,
+    }),
+    BufferElement({
+        "Name": "NORMAL",
+        "SemanticName": "NORMAL",
+        "SemanticIndex": "0",
+        "Format": "R32G32B32_FLOAT",
+        "ByteWidth": 12,
+    }),
+]
+
 POSITION_EXTRA_TANGENT_FMT = [
     BufferElement({
         "Name": "POSITION",

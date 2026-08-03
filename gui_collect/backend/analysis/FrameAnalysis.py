@@ -21,6 +21,7 @@ from gui_collect.backend.utils.buffer_utils.exceptions import InvalidTextBufferE
 from gui_collect.backend.utils.buffer_utils.structs import (
     BufferElement,
     POSITION_FMT,
+    POSITION_NORMAL_FMT,
     POSITION_EXTRA_TANGENT_FMT,
     BLEND_4VGX_FMT,
     BLEND_2VGX_FMT,
@@ -38,6 +39,38 @@ from gui_collect.frontend.state import State
 
 FILEBROWSER_PATH = os.path.join(os.getenv("WINDIR"), "explorer.exe")
 logger = logging.getLogger(__name__)
+
+POSITION_BUFFER_FORMATS = {
+    24: POSITION_NORMAL_FMT,
+    40: POSITION_FMT,
+    56: POSITION_EXTRA_TANGENT_FMT,
+}
+
+BLEND_BUFFER_FORMATS = {
+    32: BLEND_4VGX_FMT,
+    16: BLEND_2VGX_FMT,
+    4: BLEND_1VGX_FMT,
+}
+
+
+def _infer_position_blend_strides(position_size: int, blend_size: int):
+    candidates = []
+    for position_stride in POSITION_BUFFER_FORMATS:
+        for blend_stride in BLEND_BUFFER_FORMATS:
+            if position_size % position_stride != 0:
+                continue
+            if blend_size % blend_stride != 0:
+                continue
+            if position_size // position_stride == blend_size // blend_stride:
+                candidates.append((position_stride, blend_stride))
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise Exception(
+            f"Ambiguous position/blend buffer strides inferred: {candidates}"
+        )
+    raise Exception("Unexpected position and blend buffer sizes given known strides")
 
 
 class FrameAnalysis:
@@ -114,9 +147,7 @@ class FrameAnalysis:
         if buffer_stride is None:
             buffer_elements = POSITION_FMT
         else:
-            buffer_elements = {40: POSITION_FMT, 56: POSITION_EXTRA_TANGENT_FMT}[
-                buffer_stride
-            ]
+            buffer_elements = POSITION_BUFFER_FORMATS[buffer_stride]
 
         if txt_buffer_paths := [p for p in buffer_paths if p.suffix != ".buf"]:
             try:
@@ -138,17 +169,24 @@ class FrameAnalysis:
 
         return buffer, buffer_elements
 
-    def get_blend_data(self, buffer_paths: list[Path], expected_vertex_count: int):
+    def get_blend_data(
+        self,
+        buffer_paths: list[Path],
+        expected_vertex_count: int,
+        buffer_stride: int = None,
+    ):
         if len(buffer_paths) == 0:
             return None, None
         logger.debug(
             f"Attempting blend data extraction expecting vertex count = {expected_vertex_count}"
         )
-        for buffer_stride, buffer_elements in [
-            (32, BLEND_4VGX_FMT),
-            (16, BLEND_2VGX_FMT),
-            (4, BLEND_1VGX_FMT),
-        ]:
+
+        if buffer_stride is None:
+            blend_formats = BLEND_BUFFER_FORMATS.items()
+        else:
+            blend_formats = [(buffer_stride, BLEND_BUFFER_FORMATS[buffer_stride])]
+
+        for buffer_stride, buffer_elements in blend_formats:
             buffer_path = buffer_paths[0].with_suffix(".buf")
             buffer_formats = [element.Format for element in buffer_elements]
             buffer = collect_binary_buffer_data(
@@ -236,7 +274,7 @@ class FrameAnalysis:
                     if component.texcoord_path
                     else component.backup_texcoord_paths
                 )
-
+                
                 # In HSR, the position buffer can either be 56 or 40 stride. In addition, the blend stride can be
                 # strides 32 or 16 or 4 We can infer the correct stride with no ambiguity for each by matching the
                 # position vertex counts to the blend vertex counts computed from the different strides. This works
@@ -244,7 +282,9 @@ class FrameAnalysis:
                 #     POSITION_SIZE/position_stride = BLEND_SIZE/blend_stride = vertex_count
                 #  => POSITION_SIZE/BLEND_SIZE = position_stride/blend_stride
 
+
                 position_stride = None
+                blend_stride = None
                 if component.position_path and component.blend_path:
                     position_size = os.path.getsize(
                         component.position_path.with_suffix(".buf")
@@ -252,24 +292,14 @@ class FrameAnalysis:
                     blend_size = os.path.getsize(
                         component.blend_path.with_suffix(".buf")
                     )
-                    position_blend_ratio = {
-                        1.25: (40, 32),
-                        2.5: (40, 16),
-                        10: (40, 4),
-                        1.75: (56, 32),
-                        3.5: (56, 16),
-                        14: (56, 4),
-                    }
                     try:
-                        position_stride, blend_stride = position_blend_ratio[
-                            position_size / blend_size
-                        ]
-                    except KeyError:
-                        logger.error(f'Position size: {position_size}')
-                        logger.error(f'Blend size: {blend_size}')
-                        raise Exception(
-                            "Unexpected position and blend buffer sizes given known strides"
+                        position_stride, blend_stride = _infer_position_blend_strides(
+                            position_size, blend_size
                         )
+                    except Exception:
+                        logger.error(f"Position size: {position_size}")
+                        logger.error(f"Blend size: {blend_size}")
+                        raise
 
                     logger.debug(
                         f"Inferred position stride={position_stride} and blend stride={blend_stride}"
@@ -287,7 +317,7 @@ class FrameAnalysis:
                     else {},
                 )
                 blend_data, blend_elements = self.get_blend_data(
-                    blend_paths, len(position_data)
+                    blend_paths, len(position_data), blend_stride
                 )
                 texcoord_data, texcoord_elements = self.get_texcoord_data(
                     texcoord_paths
